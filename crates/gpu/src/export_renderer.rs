@@ -13,7 +13,7 @@
 
 use crate::{GpuCompositor, prepare};
 use filmcraft_project::{ItemId, Project};
-use filmcraft_render::plan::{FramePlan, plan_frame};
+use filmcraft_render::plan::{FramePlan, PlanStep, plan_frame};
 use filmcraft_render::{Image, RenderOptions, SourceProvider};
 use filmcraft_time::Tick;
 
@@ -136,7 +136,10 @@ impl ExportRenderer {
         match &plan {
             // Already the CPU image: return it unchanged instead of rendering it twice.
             FramePlan::Image(img) => Some(img.clone()),
-            FramePlan::Layers { .. } => {
+            // Transitions: the export path leaves them to the CPU reference renderer.
+            FramePlan::Composite { steps, .. } if steps.iter().any(|s| matches!(s, PlanStep::Transition { .. })) => None,
+            // layers, with adjustment layers between them
+            FramePlan::Layers { .. } | FramePlan::Composite { .. } => {
                 if device_failed() {
                     return None;
                 }
@@ -149,8 +152,6 @@ impl ExportRenderer {
                 timing::add_frame();
                 Some(Image { w: w as usize, h: h as usize, px })
             }
-            // Transitions: the export path leaves them to the CPU reference renderer.
-            FramePlan::Composite { .. } => None,
         }
     }
 }
