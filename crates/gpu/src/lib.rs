@@ -737,7 +737,7 @@ impl GpuCompositor {
                     [PlanLayer { frame: Arc::new(frame), matrix: filmcraft_geom::Affine::IDENTITY, opacity: 1.0, blend: Blend::Normal, fx: None, input: None }];
                 (img.w as u32, img.h as u32, &owned[..])
             }
-            FramePlan::Composite { width, height, steps } => return self.composite_steps(*width, *height, steps, prep),
+            FramePlan::Composite { width, height, steps } => return self.composite_steps(*width, *height, steps, prep, resolve),
         };
         let (w, h) = (w.max(1), h.max(1));
         let accum_view = Self::target(&self.device, &mut self.accum, w, h, ACCUM_FORMAT, wgpu::TextureUsages::COPY_SRC);
@@ -939,7 +939,14 @@ impl GpuCompositor {
         (if resolve { out_view } else { accum_view }, (w, h))
     }
 
-    fn composite_steps(&mut self, width: usize, height: usize, steps: &[PlanStep], prep: Option<&PreparedPlan>) -> (wgpu::TextureView, (u32, u32)) {
+    fn composite_steps(
+        &mut self,
+        width: usize,
+        height: usize,
+        steps: &[PlanStep],
+        prep: Option<&PreparedPlan>,
+        resolve: bool,
+    ) -> (wgpu::TextureView, (u32, u32)) {
         let cpu = |c: &mut Self| {
             let plan = FramePlan::Composite { width, height, steps: steps.to_vec() };
             c.composite_prepared(&FramePlan::Image(filmcraft_render::plan::execute_cpu(&plan)), None)
@@ -948,10 +955,14 @@ impl GpuCompositor {
             self.cpu_transitions += 1;
             return cpu(self);
         }
-        let adjusts = steps.iter().any(|s| matches!(s, PlanStep::Adjust { .. }));
-        if adjusts && (self.fx.is_none() || width.max(height) > self.device.limits().max_texture_dimension_2d as usize) {
+        if steps.iter().any(|s| matches!(s, PlanStep::Adjust { .. })) && !self.can_adjust(width, height) {
             self.cpu_adjustments += 1;
             return cpu(self);
+        }
+        // one frame for the effect stage's pool: the adjustment steps' working textures stay
+        // pooled with those of the layers between them
+        if let Some(f) = self.fx.as_mut() {
+            f.begin_frame();
         }
         let empty = FramePlan::Layers { width, height, layers: Vec::new() };
         let (canvas, dims) = self.render_plan(&empty, None, true, false);
@@ -977,6 +988,9 @@ impl GpuCompositor {
                 }
                 PlanStep::Adjust { ops } => {
                     if self.adjust(&canvas, dims, ops).is_none() {
+                        if let Some(f) = self.fx.as_mut() {
+                            f.end_frame();
+                        }
                         self.cpu_adjustments += 1;
                         return cpu(self);
                     }
@@ -984,7 +998,17 @@ impl GpuCompositor {
                 }
             }
         }
-        self.render_plan(&empty, None, false, true)
+        let out = self.render_plan(&empty, None, false, resolve);
+        if let Some(f) = self.fx.as_mut() {
+            f.end_frame();
+        }
+        out
+    }
+
+    /// Whether [`PlanStep::Adjust`] steps of a `width`×`height` frame run on this device: it has
+    /// an effect stage and the frame fits in a texture.
+    pub fn can_adjust(&self, width: usize, height: usize) -> bool {
+        self.fx.is_some() && width.max(height) <= self.device.limits().max_texture_dimension_2d as usize
     }
 
     /// The adjustment layer `ops` on the accumulator (`canvas`, of size `w`×`h`): it is drawn

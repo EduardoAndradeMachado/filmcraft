@@ -318,7 +318,7 @@ fn a_transition_with_an_adjustment_layer_is_not_planned_as_layers() {
     dissolve(&mut s, 1, Some(b), Some(ac), 18);
     let q = s.p.sequence(s.seq).unwrap();
     // frame 20 is still on the blue clip, but the dissolve into the adjustment layer shows
-    assert!(!crate::plan::layered_at(&s.p, q, R.tick_of(20)));
+    assert!(!crate::plan::layered_at(&s.p, q, R.tick_of(20), 1.0));
     // halfway (frame 24): half blue, half the inverted red (cyan)
     assert!(near(at(&s, 24), [0.0, 0.5, 1.0], 1e-3), "{:?}", at(&s, 24));
 }
@@ -412,8 +412,10 @@ fn a_gpu_adjustment_layer_plans_as_an_adjust_step() {
 }
 
 /// Every adjustment layer the GPU step doesn't cover yet keeps the whole frame on the CPU: an
-/// effect without a GPU implementation, an opacity below 100 %, a blend mode, a Motion that
-/// leaves part of the frame out.
+/// effect without a GPU implementation, one whose parameters the GPU doesn't run (a shrinking
+/// Transform, a Transform's shutter motion blur), an opacity below 100 %, a blend mode, a Motion
+/// that leaves part of the frame out. `is_cpu_frame` says so before planning, so the export
+/// doesn't take a GPU renderer for the frame.
 #[test]
 fn an_adjustment_layer_the_gpu_cant_run_plans_the_frame_on_the_cpu() {
     let base = || {
@@ -427,18 +429,37 @@ fn an_adjustment_layer_the_gpu_cant_run_plans_the_frame_on_the_cpu() {
     let multiply = filmcraft_project::effect::BLEND_MODES.iter().position(|b| *b == "Multiply").unwrap() as u32;
     let cases: Vec<(&str, Box<dyn Fn(&mut Scene, ClipId)>)> = vec![
         ("an effect without a GPU implementation", Box::new(|s, a| fx(s, a, "emboss"))),
+        (
+            "a Transform that shrinks the frame (the CPU's mip path)",
+            Box::new(|s, a| {
+                fx(s, a, "transform");
+                set(s, a, "transform", "scale_height", ParamValue::Float(40.0));
+            }),
+        ),
+        (
+            "a Transform with a shutter angle (motion blur)",
+            Box::new(|s, a| {
+                fx(s, a, "transform");
+                set(s, a, "transform", "shutter_override", ParamValue::Bool(true));
+                set(s, a, "transform", "shutter_angle", ParamValue::Float(180.0));
+            }),
+        ),
         ("opacity 50 %", Box::new(|s, a| set(s, a, "opacity", "opacity", ParamValue::Float(50.0)))),
         ("Multiply", Box::new(move |s, a| set(s, a, "opacity", "blend", ParamValue::Choice(multiply)))),
         ("Motion at 50 %", Box::new(|s, a| set(s, a, "motion", "scale", ParamValue::Float(50.0)))),
     ];
-    let (s, _) = base();
-    assert!(!matches!(crate::plan::plan_frame(&s.p, s.seq, R.tick_of(12), RenderOptions::default(), &s.map), crate::plan::FramePlan::Image(_)));
-    for (what, change) in cases {
-        let (mut s, adj) = base();
-        change(&mut s, adj);
-        let plan = crate::plan::plan_frame(&s.p, s.seq, R.tick_of(12), RenderOptions::default(), &s.map);
-        assert!(matches!(plan, crate::plan::FramePlan::Image(_)), "{what}: should be rendered on the CPU");
-        assert!(crate::plan::is_cpu_frame(&s.p, s.seq, R.tick_of(12)), "{what}: the export should not hand it to the GPU");
+    for scale in [1.0, 0.5] {
+        let opts = RenderOptions { scale, ..Default::default() };
+        let (s, _) = base();
+        assert!(!matches!(crate::plan::plan_frame(&s.p, s.seq, R.tick_of(12), opts, &s.map), crate::plan::FramePlan::Image(_)));
+        assert!(!crate::plan::is_cpu_frame(&s.p, s.seq, R.tick_of(12), opts), "at {scale}: the plain layer goes to the GPU");
+        for (what, change) in &cases {
+            let (mut s, adj) = base();
+            change(&mut s, adj);
+            let plan = crate::plan::plan_frame(&s.p, s.seq, R.tick_of(12), opts, &s.map);
+            assert!(matches!(plan, crate::plan::FramePlan::Image(_)), "{what} at {scale}: should be rendered on the CPU");
+            assert!(crate::plan::is_cpu_frame(&s.p, s.seq, R.tick_of(12), opts), "{what} at {scale}: the export should not hand it to the GPU");
+        }
     }
 }
 

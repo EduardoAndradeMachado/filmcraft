@@ -234,7 +234,7 @@ impl Pipeline {
         // complex transition, HDR) does not take a pooled renderer: it would render on the CPU
         // inside the pool, as many frames at a time as there are renderers instead of one per
         // export thread.
-        let pool = self.renderer.as_ref().filter(|_| !filmcraft_render::plan::is_cpu_frame(&self.project, self.seq, t));
+        let pool = self.renderer.as_ref().filter(|_| !filmcraft_render::plan::is_cpu_frame(&self.project, self.seq, t, self.opts));
         let gpu = match pool {
             Some(pool) => {
                 let asked = web_time::Instant::now();
