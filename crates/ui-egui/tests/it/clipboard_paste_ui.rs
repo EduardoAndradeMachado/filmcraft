@@ -252,6 +252,36 @@ fn ctrl_v_pastes_a_lifted_or_extracted_range_even_when_old_files_linger_on_the_c
     }
 }
 
+/// A Lift or Extract over a range with no clips on the targeted tracks leaves both clipboards
+/// alone: an image copied afterwards in another app is not taken for stale, and Ctrl+V pastes it
+/// rather than the clip copied before (#3019).
+#[test]
+fn lift_or_extract_over_no_clips_keeps_a_newer_os_image_pasteable() {
+    for cmd in ["sequence.lift", "sequence.extract"] {
+        let mut d = Driver::demo("lift-empty");
+        d.ok("ui.set", json!({"focused": "Timeline"}));
+        let first = d.clips().into_iter().find(|c| c.0 == 'V' && c.1 == 0).unwrap();
+        d.ok("engine.execute", json!({"command": "timeline.select", "params": {"clips": [first.2]}}));
+        d.ok("ui.menu.invoke", json!({"id": "edit.copy"}));
+        d.clipboard(Some(red_image));
+        let tracks: Vec<u64> = d.app().session.active_sequence().unwrap().all_tracks().map(|t| t.id.0).collect();
+        let target = |d: &mut Driver, on: bool| {
+            for t in &tracks {
+                d.ok("engine.execute", json!({"command": "timeline.setTargeting", "params": {"track": t, "targeted": on}}));
+            }
+        };
+        target(&mut d, false);
+        d.ok("engine.execute", json!({"command": "markers.markIn", "params": {"frame": 6}}));
+        d.ok("engine.execute", json!({"command": "markers.markOut", "params": {"frame": 17}}));
+        d.ok("ui.menu.invoke", json!({"id": cmd}));
+        target(&mut d, true);
+        let before = d.clips();
+        d.ctrl_v_without_text(egui::Modifiers::COMMAND);
+        let new: Vec<_> = d.clips().into_iter().filter(|c| !before.contains(c)).map(|c| c.3).collect();
+        assert_eq!(new, ["Pasted Image 1.png"], "{cmd}");
+    }
+}
+
 /// Copy from the keyboard (Ctrl+C as `Event::Copy`) also snapshots lingering OS media, so Ctrl+V
 /// pastes the clips rather than those files.
 #[test]

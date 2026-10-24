@@ -689,7 +689,7 @@ fn lift_and_extract_put_the_range_on_the_clipboard() {
         s.execute("markers.add", json!({"frame": 30, "name": "after"})).unwrap();
         s.execute("markers.markIn", json!({"frame": 12})).unwrap();
         s.execute("markers.markOut", json!({"frame": 23})).unwrap();
-        s.execute(cmd, json!({})).unwrap();
+        assert_eq!(s.execute(cmd, json!({})).unwrap()["copied"], json!(2), "{cmd}: the V1 and A1 pieces");
         s.execute("playhead.set", json!({"frame": 100})).unwrap();
         s.execute("edit.paste", json!({})).unwrap_or_else(|e| panic!("{cmd} then edit.paste: {e:?}"));
         let q = s.active_sequence().unwrap();
@@ -707,5 +707,28 @@ fn lift_and_extract_put_the_range_on_the_clipboard() {
         }
         let pasted_markers: Vec<_> = q.markers.iter().filter(|m| m.start >= at).map(|m| (m.start, m.name.as_str())).collect();
         assert_eq!(pasted_markers, vec![(f(&s, 103), "inside")], "{cmd}: only the marker inside the range comes along");
+    }
+}
+
+/// Over a range with no clips on the targeted tracks, Lift and Extract copy nothing and Paste still
+/// brings back what was copied before (#3019).
+#[test]
+fn lift_and_extract_over_no_clips_keep_the_clipboard() {
+    for cmd in ["sequence.lift", "sequence.extract"] {
+        let (mut s, item) = fresh();
+        let clips = place(&mut s, item, "V1", 0, 0, 48);
+        s.execute("timeline.select", json!({"clips": clips})).unwrap();
+        s.execute("edit.copy", json!({})).unwrap();
+        for t in ["V1", "A1"] {
+            s.execute("timeline.setTargeting", json!({"track": t, "targeted": false})).unwrap();
+        }
+        s.execute("markers.markIn", json!({"frame": 12})).unwrap();
+        s.execute("markers.markOut", json!({"frame": 23})).unwrap();
+        assert_eq!(s.execute(cmd, json!({})).unwrap()["copied"], json!(0), "{cmd}");
+        s.execute("playhead.set", json!({"frame": 100})).unwrap();
+        s.execute("edit.paste", json!({})).unwrap_or_else(|e| panic!("{cmd} then edit.paste: {e:?}"));
+        let q = s.active_sequence().unwrap();
+        let pasted = q.video_tracks[0].items.iter().find(|i| i.start == f(&s, 100)).map(|i| i.duration);
+        assert_eq!(pasted, Some(f(&s, 48)), "{cmd}: the earlier copy is pasted");
     }
 }

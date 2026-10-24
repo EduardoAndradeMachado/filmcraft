@@ -2114,10 +2114,8 @@ fn build() -> Vec<CommandSpec> {
                 edit::lift(q, &tg, r, ctx);
                 Ok(cut)
             })?;
-            if let Some(cut) = cut {
-                set_clipboard(&mut s.state, cut);
-            }
-            Ok(Value::Null)
+            let copied = store_cut(s, cut);
+            Ok(json!({"copied": copied}))
         }),
         cmd!("sequence.extract", "Extract", ["Sequence"], Some("'"), "{}", has_in_out, |s, _| {
             let r = in_out_range(s)?;
@@ -2133,11 +2131,9 @@ fn build() -> Vec<CommandSpec> {
                 q.split = Default::default();
                 Ok(cut)
             })?;
-            if let Some(cut) = cut {
-                set_clipboard(&mut s.state, cut);
-            }
+            let copied = store_cut(s, cut);
             s.set_playhead(r.start);
-            Ok(Value::Null)
+            Ok(json!({"copied": copied}))
         }),
         cmd!(
             "sequence.applyVideoTransition",
@@ -3784,6 +3780,15 @@ fn set_clipboard(st: &mut crate::EditorState, (clips, markers): Clipboard) {
     st.clipboard = clips;
     st.clipboard_markers = markers;
     st.caption_clipboard.clear();
+}
+
+/// Put a Lift or Extract cut on the clipboard; returns how many clips it holds (0 leaves the
+/// clipboard as it was).
+fn store_cut(s: &mut Session, cut: Option<Clipboard>) -> usize {
+    let Some(cut) = cut else { return 0 };
+    let copied = cut.0.len();
+    set_clipboard(&mut s.state, cut);
+    copied
 }
 
 /// What Lift and Extract put on the clipboard, as in Premiere (#3019): the clips of the unlocked
