@@ -92,10 +92,16 @@ pub fn catch_up() -> Option<Tick> {
 /// frames only at the requested media time plus whole multiples of `step`, before or after it.
 /// A wrong grid only costs a later re-seek, never a wrong frame.
 pub fn with_frame_grid<R>(step: Option<Tick>, f: impl FnOnce() -> R) -> R {
-    let prev = FRAME_GRID.with(|c| c.replace(step));
-    let r = f();
-    FRAME_GRID.with(|c| c.set(prev));
-    r
+    /// Restores the previous hint however `f` ends (a panic caught further up must not leave a
+    /// grid on the worker thread for the requests it runs next).
+    struct Restore(Option<Tick>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            FRAME_GRID.with(|c| c.set(self.0));
+        }
+    }
+    let _restore = Restore(FRAME_GRID.with(|c| c.replace(step)));
+    f()
 }
 
 /// The frame grid step of the work running on this thread (None: frames may be asked anywhere).
@@ -219,6 +225,13 @@ mod tests {
         let r = std::panic::catch_unwind(|| with_background(true, || panic!("boom")));
         assert!(r.is_err());
         assert!(!background());
+    }
+
+    #[test]
+    fn a_panic_inside_frame_grid_work_does_not_leave_the_grid_on_the_thread() {
+        let r = std::panic::catch_unwind(|| with_frame_grid(Some(Tick(7)), || panic!("boom")));
+        assert!(r.is_err());
+        assert_eq!(frame_grid(), None);
     }
 
     #[test]
