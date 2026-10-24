@@ -604,7 +604,7 @@ pub fn invoke(app: &mut FilmcraftApp, ctx: &egui::Context, id: &str, mut params:
     if r.is_ok() && matches!(id, "playhead.start" | "playhead.end") {
         crate::panels::timeline::reveal_playhead(app, ctx);
     }
-    if r.is_ok() && matches!(id, "edit.copy" | "edit.cut") {
+    if r.is_ok() && matches!(id, "edit.copy" | "edit.cut" | "sequence.lift" | "sequence.extract") {
         remember_stale_clipboard_media(app);
         put_clip_names_on_system_clipboard(app, ctx);
     }
