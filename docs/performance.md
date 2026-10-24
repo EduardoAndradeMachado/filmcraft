@@ -409,7 +409,7 @@ utilisation averaged over the run from `nvidia-smi dmon`):
 
 The export is 20 % shorter over 5 s (one clip entered, where the duplicate GOP walks were most of
 the decode) and 8 % over 20 s. The duplicate decoders ran on the hardware decoder in parallel with
-the renderers, so removing them shortens the decode work (`decodeMs` −60 to −77 %) more than the
+the renderers, so removing them shortens the decode work (`decodeMs` −58 to −77 %) more than the
 export itself; process CPU time is the same within noise (rendering and the NVENC hand-off
 dominate it, and the duplicate decoding was mostly hardware time).
 
